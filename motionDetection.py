@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 from datetime import datetime
 import json
+import sys
 
 def parse_args():
     p = argparse.ArgumentParser(description="running average")
@@ -12,10 +13,27 @@ def parse_args():
     p.add_argument("--learning-rate", type=float, default=0.01, help="background learning rate")
     p.add_argument("--output-video", default=None, help="ex: out.mp4")
     p.add_argument("--output-json", default=None, help="save detection results as JSON")
+    p.add_argument("--save-background", default=None, help="save final background image (ex: bg.png)")
     p.add_argument("--generate-test-video", default=None, help="generate short test video")
     p.add_argument("--visualize", action="store_true", help="interface (cv2.imshow)")
 
     return p.parse_args()
+
+def generate_test_video(path, width=640, height=480, duration=4, fps=20):
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(path, fourcc, fps, (width, height))
+    total = int(duration * fps)
+
+    for i in range(total):
+        frame = np.full((height, width, 3), 200, dtype=np.uint8)
+        # moving rectangle
+        x = int((i / total) * (width - 100))
+        y = height // 3
+        cv2.rectangle(frame, (x, y), (x + 100, y + 60), (0, 0, 255), -1)
+        out.write(frame)
+
+    out.release()
+    print(f"Synthetic test video created: {path}")
 
 def open_capture(source):
     # is it camera or file
@@ -30,7 +48,7 @@ def open_capture(source):
     
     return cap
 
-def process_video(input_src, output_path=None, json_path=None, thresh=25, 
+def process_video(input_src, output_path=None, json_path=None, bg_path=None, thresh=25, 
                         min_area=500, learning_rate=0.01, visualize=False):
     cap = open_capture(input_src)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -47,6 +65,7 @@ def process_video(input_src, output_path=None, json_path=None, thresh=25,
 
     # background as float image (initialized with the first frame)
     bg_float = None
+    bg_uint8 = None
     frame_idx = 0
     detections = []
 
@@ -101,6 +120,7 @@ def process_video(input_src, output_path=None, json_path=None, thresh=25,
         if visualize:
             cv2.imshow("Mask", mask)
             cv2.imshow("Frame", frame)
+            cv2.imshow("Background", bg_uint8)
 
             if cv2.waitKey(1) & 0xFF == 27:
                 break
@@ -110,7 +130,11 @@ def process_video(input_src, output_path=None, json_path=None, thresh=25,
     cap.release()
     if writer:
         writer.release()
-        
+
+    if bg_path and bg_uint8 is not None:
+        cv2.imwrite(bg_path, bg_uint8)
+        print(f"Background image saved: {bg_path}")
+
     if visualize:
         cv2.destroyAllWindows()
 
@@ -120,3 +144,21 @@ def process_video(input_src, output_path=None, json_path=None, thresh=25,
         print(f"Detections JSON saved: {json_path}")
 
     print("Processing complete.")
+
+if __name__ == "__main__":
+    args = parse_args()
+
+    if args.generate_test_video:
+        generate_test_video(args.generate_test_video)
+        # if only the test video was requested, exit
+        if args.input == 0:
+            sys.exit(0)
+
+    try:
+        process_video(args.input, output_path=args.output_video, json_path=args.output_json, 
+                    bg_path=args.save_background, thresh=args.threshold, min_area=args.min_area, 
+                    learning_rate=args.learning_rate, visualize=args.visualize)
+    
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
